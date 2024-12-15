@@ -1,12 +1,15 @@
-version: '3.8'
 services:
 
   redis:
     image: redis:alpine
     restart: always
     entrypoint: redis-server --save "" --appendonly no
+    # publishes Redis port on the host. May be modified or disabled if another
+    # Redis instance is already running.
     ports:
       - "127.0.0.1:6379:6379"
+    labels:
+      - "traefik.enable=false"
 
   traefik:
     restart: always
