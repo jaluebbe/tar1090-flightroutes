@@ -1,0 +1,42 @@
+version: '3.8'
+services:
+
+  redis:
+    image: redis:alpine
+    restart: always
+    entrypoint: redis-server --save "" --appendonly no
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  traefik:
+    restart: always
+    image: "traefik:v3.2"
+    container_name: "traefik"
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entryPoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=${MY_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "443:443"
+    volumes:
+      - "./letsencrypt:/letsencrypt"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  flight-routes-api:
+    restart: always
+    image: flight-routes-api
+    build: ../github/tar1090-flightroutes/flight_routes_api/
+    environment:
+      - REDIS_HOST=redis
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+    depends_on:
+      - redis
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.flight-routes-api.rule=Host(`flightroutes.${MY_DOMAIN}`)"
+      - "traefik.http.routers.flight-routes-api.entrypoints=websecure"
+      - "traefik.http.routers.flight-routes-api.tls.certresolver=myresolver"
+      - "traefik.http.services.flight-routes-api.loadbalancer.server.port=8080"
