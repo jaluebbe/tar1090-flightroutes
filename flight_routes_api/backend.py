@@ -33,6 +33,7 @@ class PlaneList(BaseModel):
             {"callsign": "AFR136", "lat": 49.5429, "lng": -8.4444},
             {"callsign": "DLH430"},
             {"callsign": "KLM000"},
+            {"callsign": "DEOZK"},
         ],
     )
 
