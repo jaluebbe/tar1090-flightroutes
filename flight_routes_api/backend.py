@@ -127,10 +127,11 @@ async def get_route_for_callsign(callsign: str) -> RouteResponse:
             "content": {"application/json": {"example": example_response}},
         }
     },
+    tags=["tar1090"],
 )
 async def api_routeset(planeList: PlaneList) -> list[RouteResponse]:
     """
-    Return route information on a list of callsigns / positions.
+    Returns route information on a list of callsigns / positions.
     Positions are optional and will be ignored.
     """
     if len(planeList.planes) > settings.plane_limit:
@@ -154,6 +155,16 @@ async def api_routeset(planeList: PlaneList) -> list[RouteResponse]:
 @app.options("/api/routeset", include_in_schema=False)
 async def api_routeset_options() -> Response:
     return Response(status_code=200)
+
+
+@app.get("/api/all_callsigns", include_in_schema=False)
+async def get_all_callsigns() -> list[str]:
+    """
+    Returns all callsigns that are available in the database.
+    """
+    if redis_pool is None:
+        raise RuntimeError("Redis pool is not initialized")
+    return [key.split(":")[1] async for key in redis_pool.scan_iter("route:*")]
 
 
 if __name__ == "__main__":
