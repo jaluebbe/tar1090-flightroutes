@@ -2,9 +2,10 @@ import json
 import asyncio
 import re
 from redis import asyncio as aioredis
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security.api_key import APIKeyHeader, APIKey
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
@@ -13,6 +14,7 @@ class Settings(BaseSettings):
     redis_host: str = "127.0.0.1"
     allowed_origins: str = ""
     plane_limit: int = 100
+    api_key: str
 
 
 settings = Settings()
@@ -45,7 +47,19 @@ class RouteResponse(BaseModel):
     plausible: int
 
     class Config:
-        allow_population_by_field_name = True
+        populate_by_name = True
+
+
+class RouteRequest(RouteResponse):
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "_airport_codes_iata": "CDG-ORD",
+                "airport_codes": "LFPG-KORD",
+                "callsign": "AFR136",
+                "plausible": 1,
+            }
+        }
 
 
 example_response = [
@@ -88,6 +102,18 @@ app.add_middleware(
 )
 
 redis_pool: aioredis.Redis | None = None
+
+API_KEY_NAME = "api_key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
+
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header == settings.api_key:
+        return api_key_header
+    else:
+        raise HTTPException(
+            status_code=403, detail="Could not validate credentials"
+        )
 
 
 @app.on_event("startup")
@@ -152,19 +178,86 @@ async def api_routeset(planeList: PlaneList) -> list[RouteResponse]:
     return response
 
 
-@app.options("/api/routeset", include_in_schema=False)
+@app.options("/api/routeset", include_in_schema=False, tags=["tar1090"])
 async def api_routeset_options() -> Response:
     return Response(status_code=200)
 
 
-@app.get("/api/all_callsigns", include_in_schema=False)
-async def get_all_callsigns() -> list[str]:
+@app.get("/api/all_callsigns", tags=["database"])
+async def get_all_callsigns(
+    api_key: APIKey = Depends(get_api_key)
+) -> list[str]:
     """
     Returns all callsigns that are available in the database.
     """
     if redis_pool is None:
         raise RuntimeError("Redis pool is not initialized")
     return [key.split(":")[1] async for key in redis_pool.scan_iter("route:*")]
+
+
+async def get_callsigns_by_plausibility(plausible: int) -> list[str]:
+    """
+    Returns all callsigns filtered by plausibility.
+    """
+    if redis_pool is None:
+        raise RuntimeError("Redis pool is not initialized")
+    keys = [key async for key in redis_pool.scan_iter("route:*")]
+    if keys:
+        values = await redis_pool.mget(*keys)
+        callsigns = [
+            key.split(":")[1]
+            for key, value in zip(keys, values)
+            if value is not None
+            and json.loads(value).get("plausible") == plausible
+        ]
+
+    return callsigns
+
+
+@app.get("/api/unplausible_callsigns", tags=["database"])
+async def get_unplausible_callsigns(
+    api_key: APIKey = Depends(get_api_key)
+) -> list[str]:
+    """
+    Returns all unplausible callsigns that are available in the database.
+    """
+    return await get_callsigns_by_plausibility(plausible=0)
+
+
+@app.get("/api/plausible_callsigns", tags=["database"])
+async def get_plausible_callsigns(
+    api_key: APIKey = Depends(get_api_key)
+) -> list[str]:
+    """
+    Returns all plausible callsigns that are available in the database.
+    """
+    return await get_callsigns_by_plausibility(plausible=1)
+
+
+@app.get(
+    "/api/route/{callsign}", tags=["database"], response_model=RouteResponse
+)
+async def get_route(
+    callsign: str, api_key: APIKey = Depends(get_api_key)
+) -> RouteResponse:
+    """
+    Returns the route information for a given callsign.
+    """
+    return await get_route_for_callsign(callsign)
+
+
+@app.post("/api/set_route", tags=["database"])
+async def set_route(
+    route: RouteRequest, api_key: APIKey = Depends(get_api_key)
+) -> dict:
+    """
+    Sets the route information for a given callsign.
+    """
+    if redis_pool is None:
+        raise RuntimeError("Redis pool is not initialized")
+    route_data = route.dict(by_alias=True)
+    await redis_pool.set(f"route:{route.callsign}", json.dumps(route_data))
+    return {"status": "success", "message": f"Route set for {route.callsign}."}
 
 
 if __name__ == "__main__":
