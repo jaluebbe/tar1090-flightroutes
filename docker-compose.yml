@@ -31,10 +31,11 @@ services:
   flight-routes-api:
     restart: always
     image: flight-routes-api
-    build: ../github/tar1090-flightroutes/flight_routes_api/
+    build: tar1090-flightroutes/flight_routes_api/
     environment:
       - REDIS_HOST=redis
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - API_KEY=${API_KEY}
     depends_on:
       - redis
     labels:
